@@ -1,65 +1,79 @@
 from django.db import models
 
 class HadithCollection(models.Model):
-    """Major Hadith Collection (e.g., Bukhari, Muslim)."""
-    slug = models.SlugField(unique=True, help_text="Collection identifier (e.g. bukhari)")
-    name_en = models.CharField(max_length=255)
-    name_ar = models.CharField(max_length=255)
-    total_hadiths = models.PositiveIntegerField(default=0)
-    introduction_en = models.TextField(blank=True)
-
-    class Meta:
-        ordering = ['slug']
+    """
+    Represents a major Hadith collection (e.g., Sahih Bukhari).
+    """
+    slug = models.SlugField(unique=True, db_index=True)
+    collection_id = models.IntegerField(null=True, blank=True)
+    english_title = models.CharField(max_length=255)
+    arabic_title = models.CharField(max_length=255)
+    short_intro = models.TextField(blank=True)
+    about = models.TextField(blank=True)
+    num_hadith = models.IntegerField(default=0)
+    total_hadith = models.IntegerField(default=0)
+    has_books = models.BooleanField(default=True)
+    has_chapters = models.BooleanField(default=True)
+    status = models.CharField(max_length=50, default='complete')
 
     def __str__(self):
-        return self.name_en
+        return self.english_title
 
 
 class HadithBook(models.Model):
-    """Book within a Hadith collection."""
+    """
+    Represents a book within a Hadith collection.
+    """
     collection = models.ForeignKey(HadithCollection, on_delete=models.CASCADE, related_name='books')
-    book_number = models.CharField(max_length=20)
-    name_en = models.CharField(max_length=255)
-    name_ar = models.CharField(max_length=255)
+    book_number = models.IntegerField(db_index=True)
+    english_title = models.CharField(max_length=255)
+    arabic_title = models.CharField(max_length=255)
+    english_intro = models.TextField(blank=True)
+    arabic_intro = models.TextField(blank=True)
+    first_number = models.IntegerField(null=True, blank=True)
+    last_number = models.IntegerField(null=True, blank=True)
+    total_number = models.IntegerField(default=0)
+    status = models.CharField(max_length=50, default='complete')
 
     class Meta:
-        ordering = ['collection', 'book_number']
         unique_together = ('collection', 'book_number')
 
     def __str__(self):
-        return f"{self.collection.name_en} - Book {self.book_number}: {self.name_en}"
+        return f"{self.collection.slug} - Book {self.book_number}"
 
 
 class HadithChapter(models.Model):
-    """Chapter within a Hadith book."""
+    """
+    Represents a chapter within a Hadith book.
+    """
     book = models.ForeignKey(HadithBook, on_delete=models.CASCADE, related_name='chapters')
+    collection = models.ForeignKey(HadithCollection, on_delete=models.CASCADE)
     chapter_number = models.CharField(max_length=20)
-    title_en = models.CharField(max_length=500)
-    title_ar = models.CharField(max_length=500)
-
-    class Meta:
-        ordering = ['book', 'chapter_number']
-        unique_together = ('book', 'chapter_number')
+    english_title = models.CharField(max_length=500)
+    arabic_title = models.CharField(max_length=500)
 
     def __str__(self):
-        return f"Chapter {self.chapter_number}: {self.title_en}"
+        return f"{self.collection.slug} - Book {self.book.book_number} - Chapter {self.chapter_number}"
 
 
 class Hadith(models.Model):
-    """Individual Hadith narration."""
-    chapter = models.ForeignKey(HadithChapter, on_delete=models.CASCADE, related_name='hadiths')
-    hadith_number = models.CharField(max_length=20)
-    reference_inbook = models.CharField(max_length=100, blank=True)
-    arabic_text = models.TextField(help_text="Amiri Font recommended")
-    text_en = models.TextField()
-    text_ur = models.TextField(blank=True)
-    narrator_en = models.CharField(max_length=500, blank=True)
+    """
+    Represents an individual Hadith.
+    """
+    collection = models.ForeignKey(HadithCollection, on_delete=models.CASCADE, related_name='hadiths')
+    book = models.ForeignKey(HadithBook, on_delete=models.CASCADE, related_name='hadiths')
+    chapter = models.ForeignKey(HadithChapter, on_delete=models.CASCADE, related_name='hadiths', null=True, blank=True)
+    hadith_number = models.CharField(max_length=20, db_index=True)
+    source_id = models.IntegerField(db_index=True)
+    arabic_body = models.TextField()
+    english_body = models.TextField()
+    narrator = models.TextField(blank=True)
     grade = models.CharField(max_length=255, blank=True)
-    grade_source = models.CharField(max_length=255, blank=True)
-    urn = models.CharField(max_length=100, unique=True, help_text="Unique Research Number from Sunnah.com")
+    reference = models.CharField(max_length=255, blank=True)
 
     class Meta:
-        ordering = ['chapter', 'hadith_number']
+        unique_together = ('collection', 'source_id')
+        ordering = ['collection', 'source_id']
 
     def __str__(self):
-        return f"Hadith {self.hadith_number} in {self.chapter.book.collection.name_en}"
+        return f"{self.collection.slug} - {self.hadith_number}"
