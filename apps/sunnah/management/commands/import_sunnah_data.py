@@ -3,6 +3,8 @@ import re
 import json
 import requests
 import logging
+import csv
+import io
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from apps.sunnah.models import HadithCollection, HadithBook, HadithChapter, Hadith
@@ -33,7 +35,6 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         self.stdout.write(self.style.SUCCESS("Starting Sunnah data import..."))
-        self.val_pattern = re.compile(r"'(?:\\.|[^'])*'|NULL|[\d\.-]+")
 
         # 1. Parse 02-collections.sql
         self.import_collections()
@@ -51,88 +52,104 @@ class Command(BaseCommand):
         response.raise_for_status()
         return response.text
 
-    def parse_sql_row(self, row_str):
-        matches = self.val_pattern.findall(row_str)
-        row = []
-        for m in matches:
-            if m.startswith("'") and m.endswith("'"):
-                val = m[1:-1].replace(r"\'", "'").replace(r'\"', '"').replace(r'\\', '\\').replace(r'\n', '\n')
-                val = val.replace("''", "'")
-                row.append(val)
-            elif m == 'NULL':
-                row.append(None)
-            else:
-                row.append(m)
-        return row
+    def parse_sql_rows(self, values_block):
+        """
+        Parses a block of values from an INSERT statement using csv reader.
+        This handles commas within strings correctly.
+        """
+        # Replace escaped single quotes with something unique
+        processed = values_block.replace(r"\'", "[[ESCAPED_QUOTE]]")
+        # Replace '' with something unique (SQL way of escaping ')
+        processed = processed.replace("''", "[[ESCAPED_QUOTE]]")
+
+        # We need to find each row (...), and then parse it.
+        # This is tricky because strings can contain ),
+        # But we've replaced escaped quotes, so we can try to find rows by logic.
+
+        # Simpler approach: use regex to find rows, then csv to parse row content.
+        # Find rows starting with ( and ending with ) followed by , or ;
+        rows_raw = re.findall(r"\((.*?)\)(?:,|$)", processed, re.DOTALL)
+
+        parsed_rows = []
+        for row in rows_raw:
+            # Use CSV reader to handle quoted fields and commas
+            reader = csv.reader(io.StringIO(row), quotechar="'", skipinitialspace=True)
+            for vals in reader:
+                # Post-process to restore quotes and handle NULLs
+                clean_vals = []
+                for v in vals:
+                    if v == 'NULL':
+                        clean_vals.append(None)
+                    else:
+                        clean_vals.append(v.replace("[[ESCAPED_QUOTE]]", "'"))
+                parsed_rows.append(clean_vals)
+        return parsed_rows
 
     def import_collections(self):
         self.stdout.write("Fetching and parsing 02-collections.sql...")
         try:
             content = self.fetch_sql_content(self.SQL_SOURCES["collections"])
             count = 0
-            matches = re.findall(r"INSERT INTO .*? VALUES\s*(.*?);", content, re.DOTALL | re.IGNORECASE)
-            for match in matches:
-                rows = re.findall(r"\((.*?)\),", match + ",", re.DOTALL)
-                for row in rows:
-                    vals = self.parse_sql_row(row)
-                    # Corrected Mapping based on 02-collections.sql:
-                    # (`name`, `collectionID`, `type`, `englishTitle`, `arabicTitle`, ..., `numhadith`, ..., `shortintro`, `about`, `status`, ...)
-                    # Indices: 0:slug, 1:collection_id, 3:english_title, 4:arabic_title, 8:num_hadith, 18:short_intro, 20:status
+            match = re.search(r"INSERT INTO `Collections` .*? VALUES\s*(.*?);", content, re.DOTALL | re.IGNORECASE)
+            if match:
+                rows = self.parse_sql_rows(match.group(1))
+                for vals in rows:
                     if len(vals) >= 21:
                         slug = vals[0]
                         HadithCollection.objects.update_or_create(
                             slug=slug,
                             defaults={
-                                'collection_id': int(vals[1]) if vals[1] else None,
+                                'collection_id': int(vals[1]) if vals[1] is not None else None,
                                 'english_title': vals[3],
-                                'arabic_title': vals[4] if vals[4] else "",
-                                'num_hadith': int(vals[8]) if vals[8] else 0,
-                                'total_hadith': int(vals[9]) if vals[9] else 0,
-                                'short_intro': vals[18] if vals[18] else "",
-                                'about': vals[19] if vals[19] else "",
-                                'status': vals[20] if vals[20] else 'complete'
+                                'arabic_title': vals[4] or "",
+                                'num_hadith': int(vals[8]) if vals[8] is not None else 0,
+                                'total_hadith': int(vals[9]) if vals[9] is not None else 0,
+                                'short_intro': vals[18] or "",
+                                'about': vals[19] or "",
+                                'status': vals[20] or 'complete'
                             }
                         )
                         count += 1
             self.stdout.write(self.style.SUCCESS(f"✓ Collections imported: {count}"))
         except Exception as e:
             self.stdout.write(self.style.ERROR(f"Error importing collections: {e}"))
+            logger.exception("Collections import failed")
 
     def import_books(self):
         self.stdout.write("Fetching and parsing 03-bookdata.sql...")
         try:
             content = self.fetch_sql_content(self.SQL_SOURCES["books"])
             count = 0
-            matches = re.findall(r"INSERT INTO .*? VALUES\s*(.*?);", content, re.DOTALL | re.IGNORECASE)
-            for match in matches:
-                rows = re.findall(r"\((.*?)\),", match + ",", re.DOTALL)
-                for row in rows:
-                    vals = self.parse_sql_row(row)
+            match = re.search(r"INSERT INTO `BookData` .*? VALUES\s*(.*?);", content, re.DOTALL | re.IGNORECASE)
+            if match:
+                rows = self.parse_sql_rows(match.group(1))
+                for vals in rows:
                     if len(vals) >= 27:
                         try:
                             collection = HadithCollection.objects.get(slug=vals[0])
                             HadithBook.objects.update_or_create(
                                 collection=collection,
-                                book_number=int(vals[2]),
+                                book_number=int(vals[18]),
                                 defaults={
-                                    'english_title': vals[3] if vals[3] else f"Book {vals[2]}",
-                                    'arabic_title': vals[7] if vals[7] else "",
-                                    'english_intro': vals[4] if vals[4] else "",
-                                    'arabic_intro': vals[8] if vals[8] else "",
-                                    'first_number': int(vals[22]) if vals[22] else None,
-                                    'last_number': int(vals[23]) if vals[23] else None,
-                                    'total_number': int(vals[26]) if vals[26] else 0,
-                                    'status': vals[27] if vals[27] else 'complete'
+                                    'english_title': vals[3] or f"Book {vals[18]}",
+                                    'arabic_title': vals[7] or "",
+                                    'english_intro': vals[4] or "",
+                                    'arabic_intro': vals[8] or "",
+                                    'first_number': int(vals[22]) if vals[22] is not None else None,
+                                    'last_number': int(vals[23]) if vals[23] is not None else None,
+                                    'total_number': int(vals[26]) if vals[26] is not None else 0,
+                                    'status': vals[27] or 'complete'
                                 }
                             )
                             count += 1
                         except HadithCollection.DoesNotExist:
                             continue
-                        except ValueError:
+                        except (ValueError, TypeError):
                             continue
             self.stdout.write(self.style.SUCCESS(f"✓ Books imported: {count}"))
         except Exception as e:
             self.stdout.write(self.style.ERROR(f"Error importing books: {e}"))
+            logger.exception("Books import failed")
 
     def import_hadiths(self):
         progress_path = "import_progress.json"
@@ -225,7 +242,7 @@ class Command(BaseCommand):
                             }
                         )
 
-                    if (i + 1) % 500 == 0:
+                    if (i + 1) % 1000 == 0:
                         self.stdout.write(f"  {slug}: {i+1}/{total} hadiths")
 
                 progress[slug] = "complete"
