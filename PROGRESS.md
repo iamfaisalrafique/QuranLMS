@@ -383,3 +383,10 @@ STOP — SUNNAH URLS FIXED
 - [x] Verified successful data ingestion for all collections.
 
 STOP — SUNNAH URLS FIXED
+
+## Session 14.6: Sunnah Display and Permissions Fix ✅ COMPLETE
+- [x] Set all Sunnah browsing and search endpoints to `AllowAny` permissions.
+- [x] Fixed `Collections.jsx` to use correct field names from the API (`english_title`, `arabic_title`, `num_hadith`).
+- [x] Successfully rebuilt the dashboard with updated components.
+
+STOP — SUNNAH DISPLAY FIXED
