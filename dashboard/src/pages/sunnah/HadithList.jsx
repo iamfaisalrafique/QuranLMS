@@ -39,7 +39,7 @@ const HadithList = () => {
                 }
                 
                 // Set bookmarks by hadith ID
-                const bms = new Set(bookmarksRes.data.map(b => b.hadith));
+                const bms = new Set(bookmarksRes.data.map(b => b.hadith_id));
                 setBookmarks(bms);
             } catch (error) {
                 console.error("Error fetching hadiths:", error);

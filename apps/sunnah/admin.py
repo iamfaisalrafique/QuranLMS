@@ -3,23 +3,23 @@ from .models import HadithCollection, HadithBook, HadithChapter, Hadith
 
 @admin.register(HadithCollection)
 class HadithCollectionAdmin(admin.ModelAdmin):
-    list_display = ('slug', 'name_en', 'name_ar', 'total_hadiths')
-    search_fields = ('slug', 'name_en', 'name_ar')
+    list_display = ('slug', 'english_title', 'arabic_title', 'num_hadith')
+    search_fields = ('slug', 'english_title', 'arabic_title')
 
 @admin.register(HadithBook)
 class HadithBookAdmin(admin.ModelAdmin):
-    list_display = ('collection', 'book_number', 'name_en')
+    list_display = ('collection', 'book_number', 'english_title')
     list_filter = ('collection',)
-    search_fields = ('name_en', 'book_number')
+    search_fields = ('english_title', 'book_number')
 
 @admin.register(HadithChapter)
 class HadithChapterAdmin(admin.ModelAdmin):
-    list_display = ('book', 'chapter_number', 'title_en')
-    list_filter = ('book__collection', 'book')
-    search_fields = ('title_en', 'chapter_number')
+    list_display = ('book', 'chapter_number', 'english_title')
+    list_filter = ('collection', 'book')
+    search_fields = ('english_title', 'chapter_number')
 
 @admin.register(Hadith)
 class HadithAdmin(admin.ModelAdmin):
-    list_display = ('hadith_number', 'chapter', 'grade', 'urn')
-    list_filter = ('chapter__book__collection', 'grade')
-    search_fields = ('arabic_text', 'text_en', 'hadith_number', 'urn')
+    list_display = ('hadith_number', 'collection', 'book', 'grade', 'source_id')
+    list_filter = ('collection', 'grade')
+    search_fields = ('arabic_body', 'english_body', 'hadith_number', 'source_id')
