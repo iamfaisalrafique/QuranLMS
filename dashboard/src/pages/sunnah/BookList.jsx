@@ -65,6 +65,13 @@ const BookList = () => {
 
     return (
         <div className="container-fluid">
+            <style>
+                {`
+                .collection-header {
+                    background-color: #1A6B4A !important;
+                }
+                `}
+            </style>
             <div className="row page-titles mx-0">
                 <div className="col-sm-6 p-md-0">
                     <div className="welcome-text">
@@ -85,7 +92,7 @@ const BookList = () => {
             <div className="row mb-4">
                 <div className="col-12">
                     <div className="card shadow-sm border-0 overflow-hidden" style={{ borderRadius: '1rem' }}>
-                        <div className="card-header bg-primary text-white border-0 py-4" style={{ backgroundColor: '#1A6B4A!important' }}>
+                        <div className="card-header bg-primary text-white border-0 py-4 collection-header">
                             <div className="w-100 text-center">
                                 <h2 className="mb-2" style={{ fontFamily: 'Amiri, serif', fontSize: '2.5rem' }}>{collection?.arabic_title}</h2>
                                 <h3 className="fw-bold mb-0">{collection?.english_title}</h3>
