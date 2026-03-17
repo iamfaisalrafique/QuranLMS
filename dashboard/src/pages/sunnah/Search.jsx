@@ -39,8 +39,7 @@ const Search = () => {
         try {
             let url = `sunnah/search/?q=${encodeURIComponent(query)}&page=${page}`;
             if (selectedCollections.length > 0) {
-                // Assuming backend can handle comma-separated slugs or multiple params
-                url += `&collections=${selectedCollections.join(',')}`;
+                url += `&collections=${selectedCollections.map(encodeURIComponent).join(',')}`;
             }
             
             const response = await api.get(url);
@@ -63,7 +62,8 @@ const Search = () => {
 
     const highlightText = (text, highlight) => {
         if (!highlight.trim()) return text;
-        const parts = text.split(new RegExp(`(${highlight})`, 'gi'));
+        const escaped = highlight.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const parts = text.split(new RegExp(`(${escaped})`, 'gi'));
         return (
             <span>
                 {parts.map((part, i) =>

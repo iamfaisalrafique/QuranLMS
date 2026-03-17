@@ -117,7 +117,7 @@ const Collections = () => {
                                     
                                     <div className="mt-auto d-flex justify-content-between align-items-center">
                                         <span className="badge rounded-pill" style={{ backgroundColor: '#1A6B4A', color: 'white', fontWeight: '500' }}>
-                                            {collection.num_had_ith || collection.num_hadith} Hadiths
+                                            {collection.num_hadith} Hadiths
                                         </span>
                                         <span className={`badge ${collection.status === 'complete' ? 'bg-light text-success' : 'bg-light text-muted'}`}>
                                             {collection.status === 'complete' ? 'Complete' : 'Incomplete'}

@@ -68,7 +68,7 @@ const BookList = () => {
             <style>
                 {`
                 .collection-header {
-                    background-color: #1A6B4A !important;
+                    background-color: #1A6B4A;
                 }
                 `}
             </style>
@@ -92,7 +92,7 @@ const BookList = () => {
             <div className="row mb-4">
                 <div className="col-12">
                     <div className="card shadow-sm border-0 overflow-hidden" style={{ borderRadius: '1rem' }}>
-                        <div className="card-header bg-primary text-white border-0 py-4 collection-header">
+                        <div className="card-header text-white border-0 py-4 collection-header">
                             <div className="w-100 text-center">
                                 <h2 className="mb-2" style={{ fontFamily: 'Amiri, serif', fontSize: '2.5rem' }}>{collection?.arabic_title}</h2>
                                 <h3 className="fw-bold mb-0">{collection?.english_title}</h3>
@@ -208,14 +208,11 @@ const BookList = () => {
 
             <style dangerouslySetInnerHTML={{ __html: `
                 .cursor-pointer:hover {
-                    background-color: rgba(26, 107, 74, 0.03)!important;
+                    background-color: rgba(26, 107, 74, 0.03);
                 }
                 .pagination-primary .page-item.active .page-link {
-                    background-color: #1A6B4A!important;
-                    border-color: #1A6B4A!important;
-                }
-                .bg-primary {
-                    background-color: #1A6B4A!important;
+                    background-color: #1A6B4A !important;
+                    border-color: #1A6B4A !important;
                 }
             `}} />
         </div>
