@@ -1,169 +1,255 @@
 import os
 import re
+import json
+import requests
+import logging
+import csv
+import io
 from django.core.management.base import BaseCommand
+from django.db import transaction
 from apps.sunnah.models import HadithCollection, HadithBook, HadithChapter, Hadith
 
+logger = logging.getLogger(__name__)
+
 class Command(BaseCommand):
-    help = 'Import Sunnah data from local SQL dump files'
+    help = 'Import Sunnah data from SQL files and GitHub JSON'
 
-    DB_PATH = r"D:\QuranLMS\Sunnah dot com offical\db"
-    
+    SQL_SOURCES = {
+        "collections": "https://raw.githubusercontent.com/sunnah-com/website/master/db/02-collections.sql",
+        "books": "https://raw.githubusercontent.com/sunnah-com/website/master/db/03-bookdata.sql",
+    }
+
+    JSON_SOURCES = {
+        "bukhari": "https://raw.githubusercontent.com/A7med3bdulBaset/hadith-json/v1.2.0/db/by_book/the_9_books/bukhari.json",
+        "muslim": "https://raw.githubusercontent.com/A7med3bdulBaset/hadith-json/v1.2.0/db/by_book/the_9_books/muslim.json",
+        "abudawud": "https://raw.githubusercontent.com/A7med3bdulBaset/hadith-json/v1.2.0/db/by_book/the_9_books/abudawud.json",
+        "tirmidhi": "https://raw.githubusercontent.com/A7med3bdulBaset/hadith-json/v1.2.0/db/by_book/the_9_books/tirmidhi.json",
+        "nasai": "https://raw.githubusercontent.com/A7med3bdulBaset/hadith-json/v1.2.0/db/by_book/the_9_books/nasai.json",
+        "ibnmajah": "https://raw.githubusercontent.com/A7med3bdulBaset/hadith-json/v1.2.0/db/by_book/the_9_books/ibnmajah.json",
+        "malik": "https://raw.githubusercontent.com/A7med3bdulBaset/hadith-json/v1.2.0/db/by_book/the_9_books/malik.json",
+        "ahmad": "https://raw.githubusercontent.com/AhmedBaset/hadith-json/v1.2.0/db/by_book/the_9_books/ahmed.json",
+        "darimi": "https://raw.githubusercontent.com/A7med3bdulBaset/hadith-json/v1.2.0/db/by_book/the_9_books/darimi.json",
+        "riyadussalihin": "https://raw.githubusercontent.com/AhmedBaset/hadith-json/refs/heads/main/db/by_book/other_books/riyad_assalihin.json",
+        "nawawi40": "https://raw.githubusercontent.com/A7med3bdulBaset/hadith-json/v1.2.0/db/by_book/forties/nawawi40.json",
+    }
+
     def handle(self, *args, **options):
-        self.stdout.write(self.style.SUCCESS("Starting local Sunnah data import..."))
-        self.val_pattern = re.compile(r"'(?:\\.|[^'])*'|NULL|[\d\.-]+")
+        self.stdout.write(self.style.SUCCESS("Starting Sunnah data import..."))
 
-        # 1. Import Collections
-        self.import_file("02-collections.sql", "Collections", self.process_collection_row)
+        # 1. Parse 02-collections.sql
+        self.import_collections()
 
-        # 2. Import Books
-        self.import_file("03-bookdata.sql", "BookData", self.process_book_row)
+        # 2. Parse 03-bookdata.sql
+        self.import_books()
 
-        # 3. Import English Hadiths from HadithTable
-        self.import_file("01-hadithTable.sql", "HadithTable", self.process_hadith_row)
-        
-        # 4. Import Arabic Hadiths from ArabicHadithTable (to enrich/add)
-        self.import_file("00-samplegitdb.sql", "ArabicHadithTable", self.process_arabic_hadith_row)
+        # 3. Import Hadiths from JSON
+        self.import_hadiths()
 
-        self.stdout.write(self.style.SUCCESS("Sunnah data import complete!"))
+        self.stdout.write(self.style.SUCCESS("✓ ALL COLLECTIONS COMPLETE"))
 
-    def parse_line_for_rows(self, line):
-        rows = []
-        start_indices = []
-        end_indices = []
-        in_string = False
-        escaped = False
-        for i, char in enumerate(line):
-            if char == "'" and not escaped:
-                in_string = not in_string
-            elif char == "\\" and not escaped:
-                escaped = True
-                continue
-            if not in_string:
-                if char == '(':
-                    start_indices.append(i)
-                elif char == ')':
-                    end_indices.append(i)
-            escaped = False
-        
-        for start in start_indices:
-            valid_end = next((e for e in end_indices if e > start), -1)
-            if valid_end != -1:
-                content = line[start+1:valid_end]
-                matches = self.val_pattern.findall(content)
-                row = []
-                for m in matches:
-                    if m.startswith("'") and m.endswith("'"):
-                        val = m[1:-1].replace(r"\'", "'").replace(r'\"', '"').replace(r'\\', '\\').replace(r'\n', '\n')
-                        row.append(val)
-                    elif m == 'NULL':
-                        row.append(None)
+    def fetch_sql_content(self, url):
+        response = requests.get(url)
+        response.raise_for_status()
+        return response.text
+
+    def parse_sql_rows(self, values_block):
+        """
+        Parses a block of values from an INSERT statement using csv reader.
+        This handles commas within strings correctly.
+        """
+        # Replace escaped single quotes with something unique
+        processed = values_block.replace(r"\'", "[[ESCAPED_QUOTE]]")
+        # Replace '' with something unique (SQL way of escaping ')
+        processed = processed.replace("''", "[[ESCAPED_QUOTE]]")
+
+        # We need to find each row (...), and then parse it.
+        # This is tricky because strings can contain ),
+        # But we've replaced escaped quotes, so we can try to find rows by logic.
+
+        # Simpler approach: use regex to find rows, then csv to parse row content.
+        # Find rows starting with ( and ending with ) followed by , or ;
+        rows_raw = re.findall(r"\((.*?)\)(?:,|$)", processed, re.DOTALL)
+
+        parsed_rows = []
+        for row in rows_raw:
+            # Use CSV reader to handle quoted fields and commas
+            reader = csv.reader(io.StringIO(row), quotechar="'", skipinitialspace=True)
+            for vals in reader:
+                # Post-process to restore quotes and handle NULLs
+                clean_vals = []
+                for v in vals:
+                    if v == 'NULL':
+                        clean_vals.append(None)
                     else:
-                        row.append(m)
-                if row:
-                    rows.append(row)
-        return rows
+                        clean_vals.append(v.replace("[[ESCAPED_QUOTE]]", "'"))
+                parsed_rows.append(clean_vals)
+        return parsed_rows
 
-    def import_file(self, filename, table_name, row_callback):
-        file_path = os.path.join(self.DB_PATH, filename)
-        self.stdout.write(f"Processing {filename}...")
-        if not os.path.exists(file_path):
-            self.stdout.write(self.style.ERROR(f"File not found: {file_path}"))
-            return
+    def import_collections(self):
+        self.stdout.write("Fetching and parsing 02-collections.sql...")
+        try:
+            content = self.fetch_sql_content(self.SQL_SOURCES["collections"])
+            count = 0
+            match = re.search(r"INSERT INTO `Collections` .*? VALUES\s*(.*?);", content, re.DOTALL | re.IGNORECASE)
+            if match:
+                rows = self.parse_sql_rows(match.group(1))
+                for vals in rows:
+                    if len(vals) >= 21:
+                        slug = vals[0]
+                        HadithCollection.objects.update_or_create(
+                            slug=slug,
+                            defaults={
+                                'collection_id': int(vals[1]) if vals[1] is not None else None,
+                                'english_title': vals[3],
+                                'arabic_title': vals[4] or "",
+                                'num_hadith': int(vals[8]) if vals[8] is not None else 0,
+                                'total_hadith': int(vals[9]) if vals[9] is not None else 0,
+                                'short_intro': vals[18] or "",
+                                'about': vals[19] or "",
+                                'status': vals[20] or 'complete'
+                            }
+                        )
+                        count += 1
+            self.stdout.write(self.style.SUCCESS(f"✓ Collections imported: {count}"))
+        except Exception as e:
+            self.stdout.write(self.style.ERROR(f"Error importing collections: {e}"))
+            logger.exception("Collections import failed")
 
-        in_values = False
-        count = 0
-        search_term = table_name.lower()
-        
-        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
-            for line in f:
-                lower_line = line.lower()
-                if 'insert into' in lower_line and search_term in lower_line:
-                    in_values = True
-                    if 'values' in lower_line:
-                        parts = line.split('VALUES', 1)
-                        if len(parts) > 1:
-                            for r in self.parse_line_for_rows(parts[1]):
-                                if row_callback(r): count += 1
-                    continue
-                
-                if in_values:
-                    if line.strip().startswith('--') or not line.strip(): continue
-                    current_rows = self.parse_line_for_rows(line)
-                    for r in current_rows:
-                        if row_callback(r): 
+    def import_books(self):
+        self.stdout.write("Fetching and parsing 03-bookdata.sql...")
+        try:
+            content = self.fetch_sql_content(self.SQL_SOURCES["books"])
+            count = 0
+            match = re.search(r"INSERT INTO `BookData` .*? VALUES\s*(.*?);", content, re.DOTALL | re.IGNORECASE)
+            if match:
+                rows = self.parse_sql_rows(match.group(1))
+                for vals in rows:
+                    if len(vals) >= 27:
+                        try:
+                            collection = HadithCollection.objects.get(slug=vals[0])
+                            HadithBook.objects.update_or_create(
+                                collection=collection,
+                                book_number=int(vals[18]),
+                                defaults={
+                                    'english_title': vals[3] or f"Book {vals[18]}",
+                                    'arabic_title': vals[7] or "",
+                                    'english_intro': vals[4] or "",
+                                    'arabic_intro': vals[8] or "",
+                                    'first_number': int(vals[22]) if vals[22] is not None else None,
+                                    'last_number': int(vals[23]) if vals[23] is not None else None,
+                                    'total_number': int(vals[26]) if vals[26] is not None else 0,
+                                    'status': vals[27] or 'complete'
+                                }
+                            )
                             count += 1
-                            if count % 1000 == 0: self.stdout.write(f"  Processed {count}...")
-                    if line.strip().endswith(';'): in_values = False
-        
-        self.stdout.write(self.style.SUCCESS(f"  {filename}: {count} records."))
+                        except HadithCollection.DoesNotExist:
+                            continue
+                        except (ValueError, TypeError):
+                            continue
+            self.stdout.write(self.style.SUCCESS(f"✓ Books imported: {count}"))
+        except Exception as e:
+            self.stdout.write(self.style.ERROR(f"Error importing books: {e}"))
+            logger.exception("Books import failed")
 
-    def clean_num(self, num_str):
-        if not num_str: return "0"
-        s = str(num_str)
-        if s.endswith('.00'): s = s[:-3]
-        elif s.endswith('.0'): s = s[:-2]
-        return s
+    def import_hadiths(self):
+        progress_path = "import_progress.json"
+        progress = {}
+        if os.path.exists(progress_path):
+            with open(progress_path, 'r') as f:
+                progress = json.load(f)
 
-    def process_collection_row(self, row):
-        if len(row) < 3: return False
-        HadithCollection.objects.update_or_create(slug=row[0], defaults={'name_en': row[1], 'name_ar': row[2]})
-        return True
+        for slug, url in self.JSON_SOURCES.items():
+            if progress.get(slug) == "complete":
+                self.stdout.write(f"Skipping {slug}, already complete.")
+                continue
 
-    def process_book_row(self, row):
-        if len(row) < 4: return False
-        try:
-            col = HadithCollection.objects.get(slug=row[0])
-            bnum = self.clean_num(row[1])
-            HadithBook.objects.update_or_create(collection=col, book_number=bnum, defaults={'name_en': row[2], 'name_ar': row[3]})
-            return True
-        except: return False
+            self.stdout.write(f"Importing {slug}...")
+            try:
+                collection = HadithCollection.objects.filter(slug=slug).first()
+                if not collection:
+                    collection = HadithCollection.objects.create(
+                        slug=slug,
+                        english_title=slug.replace('-', ' ').title(),
+                        arabic_title=""
+                    )
 
-    def process_hadith_row(self, row):
-        if len(row) < 13: return False
-        try:
-            col = HadithCollection.objects.get(slug=row[0])
-            bnum = self.clean_num(row[1])
-            book = HadithBook.objects.get(collection=col, book_number=bnum)
-            cnum = self.clean_num(row[3] or row[4] or row[2])
-            chapter, _ = HadithChapter.objects.update_or_create(
-                book=book, chapter_number=cnum,
-                defaults={'title_en': row[12] if len(row) > 12 else "", 'title_ar': row[8] if len(row) > 8 else ""}
-            )
-            Hadith.objects.update_or_create(
-                urn=str(row[11]),
-                defaults={
-                    'chapter': chapter, 'hadith_number': str(row[5]),
-                    'reference_inbook': f"{bnum}:{row[5]}", 'arabic_text': row[9] if len(row) > 9 else "",
-                    'text_en': row[13] if len(row) > 13 else "", 'grade': row[14] if len(row) > 14 else ""
-                }
-            )
-            return True
-        except: return False
+                response = requests.get(url)
+                if response.status_code == 404:
+                    self.stdout.write(self.style.WARNING(f"404 Not Found for {slug}: {url}"))
+                    continue
+                response.raise_for_status()
 
-    def process_arabic_hadith_row(self, row):
-        # 0: arabicURN, 1: collection, 2: bookNumber, 6: hadithNumber, 7: hadithText, 8: babName, 12: matchingEnglishURN
-        if len(row) < 13: return False
-        try:
-            col_slug = row[1]
-            bnum = self.clean_num(row[2])
-            en_urn = str(row[12]) if row[12] else f"ar-{row[0]}"
-            
-            col = HadithCollection.objects.get(slug=col_slug)
-            book = HadithBook.objects.get(collection=col, book_number=bnum)
-            cnum = self.clean_num(row[4] or row[5] or "0")
-            
-            chapter, _ = HadithChapter.objects.update_or_create(
-                book=book, chapter_number=cnum,
-                defaults={'title_ar': row[8] or ""}
-            )
-            
-            # If hadith exists by URN, updated it, otherwise create
-            Hadith.objects.update_or_create(
-                urn=en_urn,
-                defaults={
-                    'chapter': chapter, 'hadith_number': str(row[6]),
-                    'reference_inbook': f"{bnum}:{row[6]}", 'arabic_text': row[7] or ""
-                }
-            )
-            return True
-        except: return False
+                try:
+                    data = response.json()
+                except json.JSONDecodeError:
+                    text = response.text
+                    if text.startswith('\ufeff'):
+                        text = text[1:]
+                    data = json.loads(text)
+
+                hadiths_data = []
+                chapters_map = {}
+
+                if isinstance(data, dict) and "hadiths" in data:
+                    hadiths_data = data["hadiths"]
+                    if "chapters" in data:
+                        for ch in data["chapters"]:
+                            chapters_map[ch["id"]] = ch
+                elif isinstance(data, list):
+                    hadiths_data = data
+                else:
+                    self.stdout.write(self.style.ERROR(f"Unexpected JSON format for {slug}"))
+                    continue
+
+                total = len(hadiths_data)
+
+                for i, item in enumerate(hadiths_data):
+                    if not isinstance(item, dict):
+                        continue
+
+                    with transaction.atomic():
+                        book_number = item.get('bookId')
+                        chapter_number = str(item.get('chapterId'))
+
+                        book, _ = HadithBook.objects.get_or_create(
+                            collection=collection,
+                            book_number=book_number,
+                            defaults={'english_title': f"Book {book_number}", 'arabic_title': ""}
+                        )
+
+                        chapter_data = chapters_map.get(item.get('chapterId'), {})
+                        chapter, _ = HadithChapter.objects.get_or_create(
+                            collection=collection,
+                            book=book,
+                            chapter_number=chapter_number,
+                            defaults={
+                                'english_title': chapter_data.get('english', ""),
+                                'arabic_title': chapter_data.get('arabic', "")
+                            }
+                        )
+
+                        Hadith.objects.update_or_create(
+                            collection=collection,
+                            source_id=item['id'],
+                            defaults={
+                                'book': book,
+                                'chapter': chapter,
+                                'hadith_number': str(item.get('idInBook') or item['id']),
+                                'arabic_body': item.get('arabic', ''),
+                                'english_body': item.get('english', {}).get('text', ''),
+                                'narrator': item.get('english', {}).get('narrator', ''),
+                                'reference': f"{collection.english_title} {item.get('idInBook') or item['id']}"
+                            }
+                        )
+
+                    if (i + 1) % 1000 == 0:
+                        self.stdout.write(f"  {slug}: {i+1}/{total} hadiths")
+
+                progress[slug] = "complete"
+                with open(progress_path, 'w') as f:
+                    json.dump(progress, f)
+                self.stdout.write(self.style.SUCCESS(f"✓ {slug} complete: {total} hadiths"))
+
+            except Exception as e:
+                self.stdout.write(self.style.ERROR(f"Error importing {slug}: {e}"))
+                logger.exception(f"Import failed for {slug}")
