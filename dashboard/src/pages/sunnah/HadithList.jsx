@@ -11,18 +11,13 @@ const HadithList = () => {
     const [pageInfo, setPageInfo] = useState({ count: 0, next: null, previous: null, current: 1 });
     const [bookmarks, setBookmarks] = useState(new Set());
     const [books, setBooks] = useState([]);
-    const [collection, setCollection] = useState(null);
     const [viewLanguage, setViewLanguage] = useState('both'); // 'arabic', 'english', 'both'
     const [jumpPage, setJumpPage] = useState('');
 
     useEffect(() => {
         const fetchInitialData = async () => {
             try {
-                const [colRes, booksRes] = await Promise.all([
-                    api.get(`sunnah/${slug}/`),
-                    api.get(`sunnah/${slug}/books/`)
-                ]);
-                setCollection(colRes.data);
+                const booksRes = await api.get(`sunnah/${slug}/books/`);
                 setBooks(booksRes.data);
             } catch (err) {
                 console.error("Failed to load collection data", err);
