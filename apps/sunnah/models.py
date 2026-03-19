@@ -1,4 +1,5 @@
 from django.db import models
+from django.core.exceptions import ValidationError
 
 class HadithCollection(models.Model):
     """
@@ -51,6 +52,29 @@ class HadithChapter(models.Model):
     chapter_number = models.CharField(max_length=20)
     english_title = models.CharField(max_length=500)
     arabic_title = models.CharField(max_length=500)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['book', 'chapter_number'],
+                name='unique_chapter_per_book',
+            ),
+            models.CheckConstraint(
+                check=models.Q(collection=models.F('book__collection')),
+                name='chapter_collection_matches_book',
+            ),
+        ]
+
+    def clean(self):
+        """
+        Ensure that the chapter's collection matches the collection of its book.
+        """
+        # Only validate when both relations are set.
+        if self.book_id is not None and self.collection_id is not None:
+            if self.collection_id != self.book.collection_id:
+                raise ValidationError(
+                    {'collection': 'Chapter collection must match the collection of its book.'}
+                )
 
     def __str__(self):
         return f"{self.collection.slug} - Book {self.book.book_number} - Chapter {self.chapter_number}"
