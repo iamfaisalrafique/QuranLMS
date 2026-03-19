@@ -19,7 +19,6 @@ const BookList = () => {
         const fetchData = async () => {
             setLoading(true);
             try {
-<<<<<<< HEAD
                 const [colRes, booksRes] = await Promise.all([
                     api.get(`sunnah/${slug}/`),
                     api.get(`sunnah/${slug}/books/`)
@@ -27,11 +26,6 @@ const BookList = () => {
                 setCollection(colRes.data);
                 setBooks(booksRes.data);
                 setFilteredBooks(booksRes.data);
-=======
-                const response = await api.get(`sunnah/${slug}/books/`);
-                setBooks(response.data);
-                setLoading(false);
->>>>>>> origin/main
             } catch (error) {
                 console.error("Error fetching books:", error);
                 toast.error("Failed to load collection details");
