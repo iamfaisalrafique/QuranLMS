@@ -10,6 +10,7 @@ from django.db import transaction
 from apps.sunnah.models import HadithCollection, HadithBook, HadithChapter, Hadith
 
 logger = logging.getLogger(__name__)
+HADITH_IMPORT_BATCH_SIZE = 1000
 
 class Command(BaseCommand):
     help = 'Import Sunnah data from SQL files and GitHub JSON'
@@ -203,47 +204,50 @@ class Command(BaseCommand):
 
                 total = len(hadiths_data)
 
-                for i, item in enumerate(hadiths_data):
-                    if not isinstance(item, dict):
-                        continue
-
+                for start in range(0, total, HADITH_IMPORT_BATCH_SIZE):
+                    end = min(start + HADITH_IMPORT_BATCH_SIZE, total)
                     with transaction.atomic():
-                        book_number = item.get('bookId')
-                        chapter_number = str(item.get('chapterId'))
+                        for i in range(start, end):
+                            item = hadiths_data[i]
+                            if not isinstance(item, dict):
+                                continue
 
-                        book, _ = HadithBook.objects.get_or_create(
-                            collection=collection,
-                            book_number=book_number,
-                            defaults={'english_title': f"Book {book_number}", 'arabic_title': ""}
-                        )
+                            book_number = item.get('bookId')
+                            chapter_number = str(item.get('chapterId'))
 
-                        chapter_data = chapters_map.get(item.get('chapterId'), {})
-                        chapter, _ = HadithChapter.objects.get_or_create(
-                            collection=collection,
-                            book=book,
-                            chapter_number=chapter_number,
-                            defaults={
-                                'english_title': chapter_data.get('english', ""),
-                                'arabic_title': chapter_data.get('arabic', "")
-                            }
-                        )
+                            book, _ = HadithBook.objects.get_or_create(
+                                collection=collection,
+                                book_number=book_number,
+                                defaults={'english_title': f"Book {book_number}", 'arabic_title': ""}
+                            )
 
-                        Hadith.objects.update_or_create(
-                            collection=collection,
-                            source_id=item['id'],
-                            defaults={
-                                'book': book,
-                                'chapter': chapter,
-                                'hadith_number': str(item.get('idInBook') or item['id']),
-                                'arabic_body': item.get('arabic', ''),
-                                'english_body': item.get('english', {}).get('text', ''),
-                                'narrator': item.get('english', {}).get('narrator', ''),
-                                'reference': f"{collection.english_title} {item.get('idInBook') or item['id']}"
-                            }
-                        )
+                            chapter_data = chapters_map.get(item.get('chapterId'), {})
+                            chapter, _ = HadithChapter.objects.get_or_create(
+                                collection=collection,
+                                book=book,
+                                chapter_number=chapter_number,
+                                defaults={
+                                    'english_title': chapter_data.get('english', ""),
+                                    'arabic_title': chapter_data.get('arabic', "")
+                                }
+                            )
 
-                    if (i + 1) % 1000 == 0:
-                        self.stdout.write(f"  {slug}: {i+1}/{total} hadiths")
+                            Hadith.objects.update_or_create(
+                                collection=collection,
+                                source_id=item['id'],
+                                defaults={
+                                    'book': book,
+                                    'chapter': chapter,
+                                    'hadith_number': str(item.get('idInBook') or item['id']),
+                                    'arabic_body': item.get('arabic', ''),
+                                    'english_body': item.get('english', {}).get('text', ''),
+                                    'narrator': item.get('english', {}).get('narrator', ''),
+                                    'reference': f"{collection.english_title} {item.get('idInBook') or item['id']}"
+                                }
+                            )
+
+                            if (i + 1) % 1000 == 0:
+                                self.stdout.write(f"  {slug}: {i+1}/{total} hadiths")
 
                 progress[slug] = "complete"
                 with open(progress_path, 'w') as f:
